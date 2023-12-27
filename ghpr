@@ -1,0 +1,82 @@
+#!/bin/env python3
+
+from github import Github
+from github import Auth
+import argparse
+import re
+import sys
+import os
+
+def print_pr(pr, p_full=False, p_body=False):
+    print(f"title: {pr.title}")
+    print(f"url: https://github.com/linux-riscv/linux-riscv/pull/{pr.number}")
+    l = [i.name for i in pr.labels]
+    l.sort()
+    print(f"labels: {' '.join(str(i) for i in l)}")
+    if p_body:
+        print(f"body: \'{pr.body}\'")
+
+    if not p_full:
+        return
+
+    CI_APP = 15368
+    commit = r.get_commit(pr.head.sha)
+    suites = commit.get_check_suites()
+    conclusion = "NONE"
+    status = "NONE"
+    for s in suites:
+        if s.app.id == CI_APP:
+            conclusion = s.conclusion
+            status = s.status
+            break
+
+    series = "NONE"
+    comments = pr.get_issue_comments();
+    if comments.totalCount > 0:
+        msg = comments[comments.totalCount-1].body
+        m = re.match(r".*\nseries: (.*)\n", msg)
+        if m:
+            series = m.group(1)
+    print(f"pw: {series}")
+    print(f"suite_status: {status}")
+    print(f"suite_conclusion: {conclusion}")
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description=''' Manage
+    linux-riscv PRs. The tool expects that the environment variable
+    GH_TOKEN contains the Github token.
+    ''')
+
+    parser.add_argument(
+        "--pr", type=int, action="append", help="Only show PR NUMBER (can be passed multiple times)"
+    )
+
+    parser.add_argument(
+        "--full", action="store_true", help="Show all PR details"
+    )
+
+    parser.add_argument(
+        "--show-body", action="store_true", help="Show PR body"
+    )
+    return parser.parse_args()
+
+args = parse_args()
+
+token = os.getenv('GH_TOKEN')
+auth = Auth.Token(token)
+g = Github(auth=auth)
+r = g.get_organization("linux-riscv").get_repo("linux-riscv")
+
+if args.pr:
+    prs = []
+    for i in args.pr:
+        pr = r.get_pull(i)
+        prs.append(pr)
+else:
+    prs = r.get_pulls(state="open")
+
+for pr in prs:
+    print_pr(pr, p_full=args.full, p_body=args.show_body)
+
+g.close()
