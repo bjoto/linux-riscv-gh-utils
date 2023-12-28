@@ -7,39 +7,41 @@ import re
 import sys
 import os
 
-def print_pr(pr, p_full=False, p_body=False):
+def print_pr(pr, args):
     print(f"title: {pr.title}")
     print(f"url: https://github.com/linux-riscv/linux-riscv/pull/{pr.number}")
     l = [i.name for i in pr.labels]
     l.sort()
     print(f"labels: {' '.join(str(i) for i in l)}")
-    if p_body:
-        print(f"body: \'{pr.body}\'")
+    if args.show_body:
+        msg = pr.body.splitlines()
+        for i in msg:
+            print(f"body: {i}")
 
-    if not p_full:
-        return
+    if args.show_last_messages:
+        comments = pr.get_issue_comments();
+        show = (args.show_last_messages
+                if args.show_last_messages < comments.totalCount
+                else comments.totalCount)
+        for i in range(show):
+            msg = comments[comments.totalCount-1-i].body.splitlines()
+            for m in msg:
+                print(f"msg#{comments.totalCount-1-i}: {m}")
 
-    CI_APP = 15368
-    commit = r.get_commit(pr.head.sha)
-    suites = commit.get_check_suites()
-    conclusion = "NONE"
-    status = "NONE"
-    for s in suites:
-        if s.app.id == CI_APP:
-            conclusion = s.conclusion
-            status = s.status
-            break
+    if args.show_suite:
+        CI_APP = 15368
+        commit = r.get_commit(pr.head.sha)
+        suites = commit.get_check_suites()
+        conclusion = "NONE"
+        status = "NONE"
+        for s in suites:
+            if s.app.id == CI_APP:
+                conclusion = s.conclusion
+                status = s.status
+                break
 
-    series = "NONE"
-    comments = pr.get_issue_comments();
-    if comments.totalCount > 0:
-        msg = comments[comments.totalCount-1].body
-        m = re.match(r".*\nseries: (.*)\n", msg)
-        if m:
-            series = m.group(1)
-    print(f"pw: {series}")
-    print(f"suite_status: {status}")
-    print(f"suite_conclusion: {conclusion}")
+        print(f"suite_status: {status}")
+        print(f"suite_conclusion: {conclusion}")
 
 
 def parse_args():
@@ -53,12 +55,18 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--full", action="store_true", help="Show all PR details"
+        "--show-body", action="store_true", help="Show PR body"
     )
 
     parser.add_argument(
-        "--show-body", action="store_true", help="Show PR body"
+        "--show-suite", action="store_true", help="Show suite details"
     )
+
+    parser.add_argument(
+        "--show-last-messages", nargs='?', const=1, type=int, metavar="N",
+        help="Show last N messages (default 1)"
+    )
+
     return parser.parse_args()
 
 args = parse_args()
@@ -77,6 +85,6 @@ else:
     prs = r.get_pulls(state="open")
 
 for pr in prs:
-    print_pr(pr, p_full=args.full, p_body=args.show_body)
+    print_pr(pr, args)
 
 g.close()
