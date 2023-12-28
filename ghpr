@@ -3,9 +3,10 @@
 from github import Github
 from github import Auth
 import argparse
-import re
-import sys
 import os
+import re
+import requests
+import sys
 
 def print_pr(pr, args):
     print(f"title: {pr.title}")
@@ -43,6 +44,67 @@ def print_pr(pr, args):
         print(f"suite_status: {status}")
         print(f"suite_conclusion: {conclusion}")
 
+def print_workflow(pr):
+    wrs = r.get_workflow_runs(head_sha=pr.head.sha)
+    w = None
+    for i in wrs:
+        if i.name == "linux-riscv-ci-patches":
+            w = i
+            break
+    if w:
+        j = None
+        for i in w.jobs():
+            if i.name == "build-patches":
+                j = i
+                break
+
+        if j:
+            logs_url = j.logs_url()
+            logs = requests.get(logs_url, allow_redirects=True)
+            logs = logs.content.decode('utf-8')
+            strs = logs.splitlines()
+
+            reg = ".*##.*](OK|FAIL|WARN).*Patch (\d?\d?\d+)/.*Test (\d?\d?\d+)/\d?\d?\d+: (.*)"
+            p = re.compile(reg)
+            res = {}
+            err = 0
+            warn = 0
+            ok = 0
+            for i in strs:
+                m = p.match(i)
+                if m:
+                    status = m.group(1)
+                    patchnum = int(m.group(2))
+                    testnum = int(m.group(3))
+                    test = m.group(4)
+                    if patchnum not in res:
+                        res[patchnum] = {}
+                    if testnum in res[patchnum]:
+                            print(f"Multiple tests with same id: patch {patchnum}: test: {testnum}: {test}")
+                    res[patchnum][testnum] = {}
+                    if status == "OK":
+                        state = "success"
+                        ok += 1
+                    elif status == "WARN":
+                        state = "warning"
+                        warn += 1
+                    else:
+                        state = "failure"
+                        err += 1
+                    res[patchnum][testnum]["status"] = state
+                    res[patchnum][testnum]["test"] = test
+
+            if err:
+                res["conclusion"] = "failure"
+            elif warn:
+                res["conclusion"] = "warning"
+            elif ok:
+                res["conclusion"] = "success"
+
+            for i in range(1, len(res)):
+                for j in range(1, len(res[i]) + 1):
+                    print(f'patch{i:02}_test{j:02}: {res[i][j]["status"]} {res[i][j]["test"]} ')
+            print(f'conclusion: {res["conclusion"]}')
 
 def parse_args():
     parser = argparse.ArgumentParser(description=''' Manage
@@ -60,6 +122,10 @@ def parse_args():
 
     parser.add_argument(
         "--show-suite", action="store_true", help="Show suite details"
+    )
+
+    parser.add_argument(
+        "--show-workflow", action="store_true", help="Show suite details"
     )
 
     parser.add_argument(
@@ -86,5 +152,7 @@ else:
 
 for pr in prs:
     print_pr(pr, args)
+    if args.show_workflow:
+        print_workflow(pr)
 
 g.close()
