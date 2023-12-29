@@ -8,6 +8,66 @@ import re
 import requests
 import sys
 
+# --8<-- from KPD ---
+from enum import Enum
+from typing import Iterable, Optional
+
+class Status(Enum):
+    SKIPPED = "skipped"
+    PENDING = "pending"
+    SUCCESS = "success"
+    FAILURE = "failure"
+    CONFLICT = "conflict"
+
+
+def gh_conclusion_to_status(gh_conclusion: Optional[str]) -> Status:
+    """Translate a GitHub conclusion to our `Status` enum."""
+    # GitHub reports pending jobs with a `None` conclusion.
+    if gh_conclusion is None:
+        return Status.PENDING
+
+    # See
+    # https://docs.github.com/en/rest/checks/suites?apiVersion=2022-11-28#get-a-check-suite
+    # for a list of conclusions.
+    if gh_conclusion in (
+        "failure",
+        "timed_out",
+        "action_required",
+        "startup_failure",
+        "stale",
+    ):
+        return Status.FAILURE
+
+    if gh_conclusion in ("cancelled",):
+        return Status.PENDING
+
+    # A "success" overwrites any skips, as the latter are effectively
+    # neutral.
+    if gh_conclusion in ("success",):
+        return Status.SUCCESS
+
+    return Status.SKIPPED
+
+
+def process_statuses(statuses: Iterable[Status]) -> Status:
+    """Boil down a set of `Status` objects into a single one."""
+    final = Status.SKIPPED
+    for status in statuses:
+        if status == Status.FAILURE:
+            # "failure" is sticky.
+            return status
+        elif status == Status.PENDING:
+            final = status
+        elif status == Status.SUCCESS:
+            if final != Status.PENDING:
+                final = status
+        else:
+            # We ignore anything classified as `Skipped`, as that's the
+            # starting state and we treat it as "neutral".
+            pass
+    return final
+# --8<--
+
 def print_pr(pr, args):
     print(f"title: {pr.title}")
     print(f"url: https://github.com/linux-riscv/linux-riscv/pull/{pr.number}")
@@ -106,6 +166,41 @@ def print_workflow(pr):
                     print(f'patch{i:02}_test{j:02}: {res[i][j]["status"]} {res[i][j]["test"]} ')
             print(f'conclusion: {res["conclusion"]}')
 
+def print_kpd_debug(pr):
+    statuses = []
+    jobs = []
+
+    runs = r.get_workflow_runs(head_sha=pr.head.sha)
+    for run in runs:
+        status = gh_conclusion_to_status(run.conclusion)
+        run.conclusion
+        print(f"run: {run.name} {run.run_started_at} {run.conclusion} {run.status} {status}")
+        run_jobs = run.jobs()
+
+        if status == Status.FAILURE:
+            for job in run_jobs:
+                print(f"  job: '{job.name}' conclusion: {job.conclusion} status: {job.status}")
+                for step in job.steps:
+                    print(f"    step: '{step.name}' conclusion: {step.conclusion} status: {step.status}")
+                    if step.conclusion is None or step.conclusion == "cancelled":
+                        print(
+                            f"    step: '{step.name}' of {run} was interrupted/canceled; marking workflow as pending"
+                        )
+                        status = Status.PENDING
+                        break
+
+        statuses.append(status)
+        jobs += run_jobs
+
+    status = process_statuses(statuses)
+    jobs = sorted(jobs, key=lambda job: job.name)
+    jobs_logs = [
+        f"{job.conclusion} -> {gh_conclusion_to_status(job.conclusion)} ({job.html_url})"
+        for job in jobs
+    ]
+
+    print(f"status: overall: '{status}', jobs: '{jobs_logs}")
+
 def parse_args():
     parser = argparse.ArgumentParser(description=''' Manage
     linux-riscv PRs. The tool expects that the environment variable
@@ -126,6 +221,10 @@ def parse_args():
 
     parser.add_argument(
         "--show-workflow", action="store_true", help="Show suite details"
+    )
+
+    parser.add_argument(
+        "--kpd", action="store_true", help="KPD conclusion debugging"
     )
 
     parser.add_argument(
@@ -154,5 +253,7 @@ for pr in prs:
     print_pr(pr, args)
     if args.show_workflow:
         print_workflow(pr)
+    if args.kpd:
+        print_kpd_debug(pr)
 
 g.close()
