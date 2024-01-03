@@ -173,7 +173,6 @@ def print_kpd_debug(pr):
     runs = r.get_workflow_runs(head_sha=pr.head.sha)
     for run in runs:
         status = gh_conclusion_to_status(run.conclusion)
-        run.conclusion
         print(f"run: {run.name} {run.run_started_at} {run.conclusion} {run.status} {status}")
         run_jobs = run.jobs()
 
@@ -200,6 +199,18 @@ def print_kpd_debug(pr):
     ]
 
     print(f"status: overall: '{status}', jobs: '{jobs_logs}")
+
+def print_runs(pr):
+    runs = r.get_workflow_runs(head_sha=pr.head.sha)
+    for run in runs:
+        print(f"run: name='{run.name}' run_started_at='{run.run_started_at}' conclusion='{run.conclusion}' status='{run.status}'")
+        if not args.runs_all:
+            continue
+        run_jobs = run.jobs()
+        for job in run_jobs:
+            print(f"  job: name='{job.name}' conclusion='{job.conclusion}' status='{job.status}'")
+            for step in job.steps:
+                print(f"    step: name='{step.name}' conclusion='{step.conclusion}' status='{step.status}'")
 
 def parse_args():
     parser = argparse.ArgumentParser(description=''' Manage
@@ -228,6 +239,13 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--runs", action="store_true", help="Dump"
+    )
+    parser.add_argument(
+        "--runs-all", action="store_true", help="Dump"
+    )
+
+    parser.add_argument(
         "--show-last-messages", nargs='?', const=1, type=int, metavar="N",
         help="Show last N messages (default 1)"
     )
@@ -239,6 +257,7 @@ args = parse_args()
 token = os.getenv('GH_TOKEN')
 auth = Auth.Token(token)
 g = Github(auth=auth)
+# r = g.get_user().get_repo("linux")
 r = g.get_organization("linux-riscv").get_repo("linux-riscv")
 
 if args.pr:
@@ -255,5 +274,7 @@ for pr in prs:
         print_workflow(pr)
     if args.kpd:
         print_kpd_debug(pr)
+    if args.runs or args.runs_all:
+        print_runs(pr)
 
 g.close()
