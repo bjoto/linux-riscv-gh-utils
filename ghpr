@@ -73,7 +73,9 @@ def print_pr(pr, args):
     print(f"url: https://github.com/linux-riscv/linux-riscv/pull/{pr.number}")
     l = [i.name for i in pr.labels]
     l.sort()
-    print(f"labels: {' '.join(str(i) for i in l)}")
+    labels = ' '.join(str(i) for i in l)
+    if len(labels):
+        print(f"labels: {labels}")
     if args.show_body:
         msg = pr.body.splitlines()
         for i in msg:
@@ -359,6 +361,10 @@ def parse_args():
         "--orphan-runs", action="store_true", help="Dump"
     )
 
+    parser.add_argument(
+        "--upstream-prs", action="store_true", help="Dump"
+    )
+
     return parser.parse_args()
 
 args = parse_args()
@@ -366,8 +372,8 @@ args = parse_args()
 token = os.getenv('GH_TOKEN')
 auth = Auth.Token(token)
 g = Github(auth=auth)
-r = g.get_user().get_repo("linux")
-# r = g.get_organization("linux-riscv").get_repo("linux-riscv")
+# r = g.get_user().get_repo("linux")
+r = g.get_organization("linux-riscv").get_repo("linux-riscv")
 
 if args.pr:
     prs = []
@@ -376,6 +382,13 @@ if args.pr:
         prs.append(pr)
 else:
     prs = r.get_pulls(state="open")
+
+if args.upstream_prs:
+    _prs = prs
+    prs = []
+    for pr in _prs:
+        if pr.head.ref[-5:] == "_test":
+            prs.append(pr)
 
 if args.orphan_runs:
     if args.pr:
