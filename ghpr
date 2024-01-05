@@ -392,8 +392,7 @@ if args.upstream_prs:
 
 if args.orphan_runs:
     if args.pr:
-        print("Error: --pr forbidden here")
-        sys.exit(1)
+        prs = r.get_pulls(state="open")
     print_pending_orphans(prs)
 else:
     for pr in prs:
