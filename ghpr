@@ -104,11 +104,13 @@ def print_pr(pr, args):
         print(f"suite_status: {status}")
         print(f"suite_conclusion: {conclusion}")
 
-def print_workflow(pr):
+def print_patches_workflow(pr):
     wrs = r.get_workflow_runs(head_sha=pr.head.sha)
     w = None
     for i in wrs:
         if i.name == "linux-riscv-ci-patches":
+            if i.conclusion == "skipped":
+                 return
             w = i
             break
     if w:
@@ -151,20 +153,94 @@ def print_workflow(pr):
                     else:
                         state = "failure"
                         err += 1
+                    res[patchnum][testnum]["state"] = status
                     res[patchnum][testnum]["status"] = state
                     res[patchnum][testnum]["test"] = test
 
             if err:
                 res["conclusion"] = "failure"
-            elif warn:
-                res["conclusion"] = "warning"
-            elif ok:
+            elif warn or ok:
                 res["conclusion"] = "success"
 
             for i in range(1, len(res)):
                 for j in range(1, len(res[i]) + 1):
-                    print(f'patch{i:02}_test{j:02}: {res[i][j]["status"]} {res[i][j]["test"]} ')
-            print(f'conclusion: {res["conclusion"]}')
+                    if args.all_results or res[i][j]["state"] != "OK":
+                        print(f'patch{i:02}_test{j:02}: {res[i][j]["state"]} {res[i][j]["test"]}')
+            print(f'patches: conclusion: {res["conclusion"]} total: {err + warn + ok}')
+
+def print_series_workflow(pr):
+    wrs = r.get_workflow_runs(head_sha=pr.head.sha)
+    w = None
+    for i in wrs:
+        if i.name == "linux-riscv-ci-series":
+            if i.conclusion == "skipped":
+                return
+            w = i
+            break
+    if w:
+        j = None
+        for i in w.jobs():
+            if i.name == "build-series":
+                j = i
+                break
+
+        if j:
+            logs_url = j.logs_url()
+            logs = requests.get(logs_url, allow_redirects=True)
+            logs = logs.content.decode('utf-8')
+            strs = logs.splitlines()
+
+            p_test = re.compile(r".*##.*]Testing (\S+) (\S+)")
+            p_test_res = re.compile(r".*##.*](OK|FAIL|WARN) (\S+) (\S+)")
+            p_build = re.compile(r".*##.*]Building (\S+)")
+            p_build_res = re.compile(r".*##.*](OK|FAIL|WARN) (\S+)")
+
+            is_testing = False
+            is_building = False
+            m_test = None
+            m_build = None
+            test_open = 0
+            test_close = 0
+            build_open = 0
+            build_close = 0
+            for i in strs:
+                if m_test:
+                    m = p_test_res.match(i)
+                    if m:
+                        if m.group(2) != m_test.group(1) or m.group(3) != m_test.group(2):
+                            print(f"ERROR: Test mismatch! Corrupt log? Manual check: {j.logs_url()}")
+                            sys.exit(1)
+                        if args.all_results or m.group(1) != "OK":
+                            print(f"booting {m.group(1)}: {os.path.basename(m.group(2))} {os.path.basename(m.group(3))}")
+                        test_close += 1
+                        m_test = None
+                    continue
+
+                if m_build:
+                    m = p_build_res.match(i)
+                    if m:
+                        if m.group(2) != m_build.group(1):
+                            print(f"ERROR: Build mismatch! Corrupt log? Manual check: {j.logs_url()}")
+                            sys.exit(1)
+                        if args.all_results or m.group(1) != "OK":
+                            print(f"building {m.group(1)}: {os.path.basename(m.group(2))}")
+                        build_close += 1
+                        m_build = None
+                    continue
+
+                m_test = p_test.match(i)
+                if m_test:
+                    test_open += 1
+                    continue
+
+                m_build = p_build.match(i)
+                if m_build:
+                    build_open += 1
+                    continue
+            if test_open != test_close or build_open != build_close:
+                print(f"ERROR: Result mismatch! Corrupt log? Manual check: {j.logs_url()}")
+                sys.exit(1)
+            print(f"series: builds: {build_open} boots: {test_open}")
 
 def print_kpd_debug(pr):
     statuses = []
@@ -203,7 +279,7 @@ def print_kpd_debug(pr):
 def print_runs(pr):
     runs = r.get_workflow_runs(head_sha=pr.head.sha)
     for run in runs:
-        print(f"run: name='{run.name}' run_started_at='{run.run_started_at}' conclusion='{run.conclusion}' status='{run.status}'")
+        print(f"run: name='{run.name}' run_started_at='{run.run_started_at}' conclusion='{run.conclusion}' status='{run.status}' event='{run.event}' prs='{run.pull_requests}'")
         if not args.runs_all:
             continue
         run_jobs = run.jobs()
@@ -211,6 +287,26 @@ def print_runs(pr):
             print(f"  job: name='{job.name}' conclusion='{job.conclusion}' status='{job.status}'")
             for step in job.steps:
                 print(f"    step: name='{step.name}' conclusion='{step.conclusion}' status='{step.status}'")
+
+def print_pending_orphans(prs):
+    good_runs = set()
+    for pr in prs:
+        runs = r.get_workflow_runs(head_sha=pr.head.sha)
+        for run in runs:
+            if run.status == "in_progress" or run.status == "queued":
+                good_runs.add(run)
+
+    all_runs = set()
+    for run in runs:
+        if run.status == "in_progress" or run.status == "queued":
+            all_runs.add(run)
+    orphan_runs = all_runs.difference(good_runs)
+    if len(orphan_runs) == 0:
+        print("No orphan runs")
+        return
+    for run in orphan_runs:
+        print(f"orphan: {run}")
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description=''' Manage
@@ -231,7 +327,15 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--show-workflow", action="store_true", help="Show suite details"
+        "--patches-workflow", action="store_true", help="Show latests build-patches workflow"
+    )
+
+    parser.add_argument(
+        "--series-workflow", action="store_true", help="Show latests build-series workflow"
+    )
+
+    parser.add_argument(
+        "--all-results", action="store_true", help=""
     )
 
     parser.add_argument(
@@ -241,6 +345,7 @@ def parse_args():
     parser.add_argument(
         "--runs", action="store_true", help="Dump"
     )
+
     parser.add_argument(
         "--runs-all", action="store_true", help="Dump"
     )
@@ -250,6 +355,10 @@ def parse_args():
         help="Show last N messages (default 1)"
     )
 
+    parser.add_argument(
+        "--orphan-runs", action="store_true", help="Dump"
+    )
+
     return parser.parse_args()
 
 args = parse_args()
@@ -257,8 +366,8 @@ args = parse_args()
 token = os.getenv('GH_TOKEN')
 auth = Auth.Token(token)
 g = Github(auth=auth)
-# r = g.get_user().get_repo("linux")
-r = g.get_organization("linux-riscv").get_repo("linux-riscv")
+r = g.get_user().get_repo("linux")
+# r = g.get_organization("linux-riscv").get_repo("linux-riscv")
 
 if args.pr:
     prs = []
@@ -268,13 +377,21 @@ if args.pr:
 else:
     prs = r.get_pulls(state="open")
 
-for pr in prs:
-    print_pr(pr, args)
-    if args.show_workflow:
-        print_workflow(pr)
-    if args.kpd:
-        print_kpd_debug(pr)
-    if args.runs or args.runs_all:
-        print_runs(pr)
+if args.orphan_runs:
+    if args.pr:
+        print("Error: --pr forbidden here")
+        sys.exit(1)
+    print_pending_orphans(prs)
+else:
+    for pr in prs:
+        print_pr(pr, args)
+        if args.patches_workflow:
+            print_patches_workflow(pr)
+        if args.series_workflow:
+            print_series_workflow(pr)
+        if args.kpd:
+            print_kpd_debug(pr)
+        if args.runs or args.runs_all:
+            print_runs(pr)
 
 g.close()
