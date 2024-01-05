@@ -168,7 +168,8 @@ def print_patches_workflow(pr):
                 for j in range(1, len(res[i]) + 1):
                     if args.all_results or res[i][j]["state"] != "OK":
                         print(f'patch{i:02}_test{j:02}: {res[i][j]["state"]} {res[i][j]["test"]}')
-            print(f'patches: conclusion: {res["conclusion"]} total: {err + warn + ok}')
+            if err + warn + ok:
+                print(f'patches: conclusion: {res["conclusion"]} total: {err + warn + ok}')
 
 def print_series_workflow(pr):
     wrs = r.get_workflow_runs(head_sha=pr.head.sha)
