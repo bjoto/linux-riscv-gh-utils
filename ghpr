@@ -245,6 +245,47 @@ def print_series_workflow(pr):
                 sys.exit(1)
             print(f"series: builds: {build_open} boots: {test_open}")
 
+def print_broken_runs(pr):
+    wrs = r.get_workflow_runs(head_sha=pr.head.sha)
+    wp = None
+    ws = None
+    for i in wrs:
+        if i.name == "linux-riscv-ci-patches":
+            if i.conclusion == "failure" or i.conclusion == "success":
+                wp = i
+            break
+    for i in wrs:
+        if i.name == "linux-riscv-ci-series":
+            if i.conclusion == "failure" or i.conclusion == "success":
+                ws = i
+            break
+
+    if wp:
+        for j in wp.jobs():
+            for s in j.steps:
+                if s.conclusion == "skipped":
+                    print(f"broken run (patches) found: {wp.html_url}")
+                    if args.rerun:
+                        wp.rerun()
+                    break
+            else:
+                continue
+            break
+
+
+    if ws:
+        for j in ws.jobs():
+            for s in j.steps:
+                if s.conclusion == "skipped":
+                    print(f"broken run (series): found {ws.html_url}")
+                    if args.rerun:
+                        ws.rerun()
+                    break
+            else:
+                continue
+            break
+
+
 def print_kpd_debug(pr):
     statuses = []
     jobs = []
@@ -366,6 +407,14 @@ def parse_args():
         "--upstream-prs", action="store_true", help="Dump"
     )
 
+    parser.add_argument(
+        "--broken-runs", action="store_true", help="Dump"
+    )
+
+    parser.add_argument(
+        "--rerun", action="store_true", help="Dump"
+    )
+
     return parser.parse_args()
 
 args = parse_args()
@@ -406,5 +455,7 @@ else:
             print_kpd_debug(pr)
         if args.runs or args.runs_all:
             print_runs(pr)
+        if args.broken_runs:
+            print_broken_runs(pr)
 
 g.close()
