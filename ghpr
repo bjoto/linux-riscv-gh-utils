@@ -7,6 +7,8 @@ import os
 import re
 import requests
 import sys
+import datetime
+import dateutil.parser
 
 # --8<-- from KPD ---
 from enum import Enum
@@ -76,7 +78,7 @@ def print_pr(pr, args):
     labels = ' '.join(str(i) for i in l)
     if len(labels):
         print(f"labels: {labels}")
-    if args.show_body:
+    if args.pr_body:
         msg = pr.body.splitlines()
         for i in msg:
             print(f"body: {i}")
@@ -90,21 +92,6 @@ def print_pr(pr, args):
             msg = comments[comments.totalCount-1-i].body.splitlines()
             for m in msg:
                 print(f"msg#{comments.totalCount-1-i}: {m}")
-
-    if args.show_suite:
-        CI_APP = 15368
-        commit = r.get_commit(pr.head.sha)
-        suites = commit.get_check_suites()
-        conclusion = "NONE"
-        status = "NONE"
-        for s in suites:
-            if s.app.id == CI_APP:
-                conclusion = s.conclusion
-                status = s.status
-                break
-
-        print(f"suite_status: {status}")
-        print(f"suite_conclusion: {conclusion}")
 
 def print_patches_workflow(pr):
     wrs = r.get_workflow_runs(head_sha=pr.head.sha)
@@ -341,16 +328,34 @@ def print_pending_orphans(prs):
                 good_runs.add(run)
 
     all_runs = set()
+    runs = r.get_workflow_runs(status="in_progress")
     for run in runs:
-        if run.status == "in_progress" or run.status == "queued":
-            all_runs.add(run)
+        all_runs.add(run)
+    runs = r.get_workflow_runs(status="queued")
+    for run in runs:
+        all_runs.add(run)
     orphan_runs = all_runs.difference(good_runs)
     if len(orphan_runs) == 0:
         print("No orphan runs")
         return
     for run in orphan_runs:
-        print(f"orphan: {run}")
+        print(f"orphan: {run.html_url}")
+        if args.cancel:
+            run.cancel()
 
+PULL_REQUEST_TTL = datetime.timedelta(days=10)
+
+def print_age(pr):
+    commits = pr.get_commits()
+    if commits.totalCount == 0:
+        return False
+
+    commit = commits[commits.totalCount - 1]
+    last_modified = dateutil.parser.parse(commit.stats.last_modified)
+    age = datetime.datetime.now(datetime.timezone.utc) - last_modified
+    print(f"age: {age}")
+    if age > PULL_REQUEST_TTL:
+        print(f"{pr} is outdated")
 
 def parse_args():
     parser = argparse.ArgumentParser(description=''' Manage
@@ -363,11 +368,7 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--show-body", action="store_true", help="Show PR body"
-    )
-
-    parser.add_argument(
-        "--show-suite", action="store_true", help="Show suite details"
+        "--pr-body", action="store_true", help="Show PR body"
     )
 
     parser.add_argument(
@@ -379,7 +380,7 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--all-results", action="store_true", help=""
+        "--all-results", action="store_true", help="Show successful tests, in addition to failed"
     )
 
     parser.add_argument(
@@ -387,11 +388,11 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--runs", action="store_true", help="Dump"
+        "--runs", action="store_true", help="Show runs"
     )
 
     parser.add_argument(
-        "--runs-all", action="store_true", help="Dump"
+        "--runs-all", action="store_true", help="Show runs with more details"
     )
 
     parser.add_argument(
@@ -400,19 +401,35 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--orphan-runs", action="store_true", help="Dump"
+        "--orphan-runs", action="store_true", help="Show runs with out a backing PR (candidates for --cancel)"
     )
 
     parser.add_argument(
-        "--upstream-prs", action="store_true", help="Dump"
+        "--upstream-prs", action="store_true", help="Show all _test branches (upstream syncs)"
     )
 
     parser.add_argument(
-        "--broken-runs", action="store_true", help="Dump"
+        "--pw-prs", action="store_true", help="Show Patchwork PRs"
     )
 
     parser.add_argument(
-        "--rerun", action="store_true", help="Dump"
+        "--broken-runs", action="store_true", help="Show runs that was interrupted (K8s issues)"
+    )
+
+    parser.add_argument(
+        "--rerun", action="store_true", help="Rerun a run (used with broken-runs)"
+    )
+
+    parser.add_argument(
+        "--cancel", action="store_true", help="Cancels a run"
+    )
+
+    parser.add_argument(
+        "--close", action="store_true", help="Closes a PR"
+    )
+
+    parser.add_argument(
+        "--age", action="store_true", help="Shows the age of a PR"
     )
 
     return parser.parse_args()
@@ -440,6 +457,13 @@ if args.upstream_prs:
         if pr.head.ref[-5:] == "_test":
             prs.append(pr)
 
+if args.pw_prs:
+    _prs = prs
+    prs = []
+    for pr in _prs:
+        if pr.head.ref[-5:] != "_test":
+            prs.append(pr)
+
 if args.orphan_runs:
     if args.pr:
         prs = r.get_pulls(state="open")
@@ -447,6 +471,10 @@ if args.orphan_runs:
 else:
     for pr in prs:
         print_pr(pr, args)
+        if args.age:
+            print_age(pr)
+        if args.close:
+            pr.edit(state="closed")
         if args.patches_workflow:
             print_patches_workflow(pr)
         if args.series_workflow:
