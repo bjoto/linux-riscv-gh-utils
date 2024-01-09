@@ -174,7 +174,7 @@ def print_build_series_run(run):
         p_test_res = re.compile(r".*##.*](OK|FAIL|WARN) (\S+) (\S+)")
         p_build = re.compile(r".*##.*]Building (\S+)")
         p_build_res = re.compile(r".*##.*](OK|FAIL|WARN) (\S+)")
-        p_gitlog = re.compile(r".*##.*git-tip begin.*")
+        p_gitlog = re.compile(r".*git-tip begin")
 
         is_testing = False
         is_building = False
@@ -190,7 +190,7 @@ def print_build_series_run(run):
                 m = p_gitlog.match(i)
                 if m:
                     gitlog_cnt += 1
-            elif gitlog_cnt < 6:
+            elif gitlog_cnt < 7:
                 print(f"series: git: {i}")
                 gitlog_cnt += 1
 
