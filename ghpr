@@ -174,6 +174,7 @@ def print_build_series_run(run):
         p_test_res = re.compile(r".*##.*](OK|FAIL|WARN) (\S+) (\S+)")
         p_build = re.compile(r".*##.*]Building (\S+)")
         p_build_res = re.compile(r".*##.*](OK|FAIL|WARN) (\S+)")
+        p_gitlog = re.compile(r".*##.*git-tip begin.*")
 
         is_testing = False
         is_building = False
@@ -183,7 +184,16 @@ def print_build_series_run(run):
         test_close = 0
         build_open = 0
         build_close = 0
+        gitlog_cnt = 0
         for i in strs:
+            if gitlog_cnt == 0:
+                m = p_gitlog.match(i)
+                if m:
+                    gitlog_cnt += 1
+            elif gitlog_cnt < 6:
+                print(f"series: git: {i}")
+                gitlog_cnt += 1
+
             if m_test:
                 m = p_test_res.match(i)
                 if m:
@@ -218,11 +228,10 @@ def print_build_series_run(run):
                 build_open += 1
                 continue
         if test_open != test_close or build_open != build_close:
-            print(f"ERROR: Result mismatch! Corrupt log? Manual check: {j.logs_url()}")
+            print(f"series: ERROR: Result mismatch! Corrupt log? Manual check: {j.logs_url()}")
 
-        if build_open != SERIES_EXPECTED_BUILDS or test_open != SERIES_EXPECTED_BOOTS:
-            print(f"series: INTERRUPTED? RERUN? builds: {build_open}/{SERIES_EXPECTED_BUILDS} boots: {test_open}/{SERIES_EXPECTED_BOOTS}")
-
+        if build_open < SERIES_EXPECTED_BUILDS or test_open < SERIES_EXPECTED_BOOTS:
+            print(f"series: UNEXPECTED RESULTS: INTERRUPTED? builds: {build_open}/{SERIES_EXPECTED_BUILDS} boots: {test_open}/{SERIES_EXPECTED_BOOTS}")
 
 def print_series_workflow(pr):
     wrs = r.get_workflow_runs(head_sha=pr.head.sha)
@@ -380,10 +389,9 @@ def print_series_runs(runs):
             return
         if run.conclusion == "skipped":
             continue
-        print(f"series: status: {run.status}")
+        print(f"series: status: {run.status} started: {run.run_started_at}")
         if run.status != "completed":
             continue
-        print(f"series: started: {run.run_started_at}")
         print_build_series_run(run)
 
 def parse_args():
@@ -468,7 +476,6 @@ def parse_args():
     parser.add_argument(
         "--branch-series", type=str, action="append", help=""
     )
-
 
     return parser.parse_args()
 
