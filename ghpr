@@ -161,6 +161,69 @@ def print_patches_workflow(pr):
 SERIES_EXPECTED_BUILDS=132
 SERIES_EXPECTED_BOOTS=174
 
+def print_build_series_run(run):
+    for j in run.jobs():
+        if j.name != "build-series":
+            continue
+        logs_url = j.logs_url()
+        logs = requests.get(logs_url, allow_redirects=True)
+        logs = logs.content.decode('utf-8')
+        strs = logs.splitlines()
+
+        p_test = re.compile(r".*##.*]Testing (\S+) (\S+)")
+        p_test_res = re.compile(r".*##.*](OK|FAIL|WARN) (\S+) (\S+)")
+        p_build = re.compile(r".*##.*]Building (\S+)")
+        p_build_res = re.compile(r".*##.*](OK|FAIL|WARN) (\S+)")
+
+        is_testing = False
+        is_building = False
+        m_test = None
+        m_build = None
+        test_open = 0
+        test_close = 0
+        build_open = 0
+        build_close = 0
+        for i in strs:
+            if m_test:
+                m = p_test_res.match(i)
+                if m:
+                    if m.group(2) != m_test.group(1) or m.group(3) != m_test.group(2):
+                        print(f"ERROR: Test mismatch! Corrupt log? Manual check: {j.logs_url()}")
+                        sys.exit(1)
+                    if args.all_results or m.group(1) != "OK":
+                        print(f"booting {m.group(1)}: {os.path.basename(m.group(2))} {os.path.basename(m.group(3))}")
+                    test_close += 1
+                    m_test = None
+                continue
+
+            if m_build:
+                m = p_build_res.match(i)
+                if m:
+                    if m.group(2) != m_build.group(1):
+                        print(f"ERROR: Build mismatch! Corrupt log? Manual check: {j.logs_url()}")
+                        sys.exit(1)
+                    if args.all_results or m.group(1) != "OK":
+                        print(f"building {m.group(1)}: {os.path.basename(m.group(2))}")
+                    build_close += 1
+                    m_build = None
+                continue
+
+            m_test = p_test.match(i)
+            if m_test:
+                test_open += 1
+                continue
+
+            m_build = p_build.match(i)
+            if m_build:
+                build_open += 1
+                continue
+        if test_open != test_close or build_open != build_close:
+            print(f"ERROR: Result mismatch! Corrupt log? Manual check: {j.logs_url()}")
+
+        if build_open != SERIES_EXPECTED_BUILDS or test_open != SERIES_EXPECTED_BOOTS:
+            print(f"series: INTERRUPTED? RERUN? builds: {build_open}/{SERIES_EXPECTED_BUILDS} boots: {test_open}/{SERIES_EXPECTED_BOOTS}")
+
+
 def print_series_workflow(pr):
     wrs = r.get_workflow_runs(head_sha=pr.head.sha)
     w = None
@@ -174,71 +237,7 @@ def print_series_workflow(pr):
             w = i
             break
     if w:
-        j = None
-        for i in w.jobs():
-            if i.name == "build-series":
-                j = i
-                break
-
-        if j:
-            logs_url = j.logs_url()
-            logs = requests.get(logs_url, allow_redirects=True)
-            logs = logs.content.decode('utf-8')
-            strs = logs.splitlines()
-
-            p_test = re.compile(r".*##.*]Testing (\S+) (\S+)")
-            p_test_res = re.compile(r".*##.*](OK|FAIL|WARN) (\S+) (\S+)")
-            p_build = re.compile(r".*##.*]Building (\S+)")
-            p_build_res = re.compile(r".*##.*](OK|FAIL|WARN) (\S+)")
-
-            is_testing = False
-            is_building = False
-            m_test = None
-            m_build = None
-            test_open = 0
-            test_close = 0
-            build_open = 0
-            build_close = 0
-            for i in strs:
-                if m_test:
-                    m = p_test_res.match(i)
-                    if m:
-                        if m.group(2) != m_test.group(1) or m.group(3) != m_test.group(2):
-                            print(f"ERROR: Test mismatch! Corrupt log? Manual check: {j.logs_url()}")
-                            sys.exit(1)
-                        if args.all_results or m.group(1) != "OK":
-                            print(f"booting {m.group(1)}: {os.path.basename(m.group(2))} {os.path.basename(m.group(3))}")
-                        test_close += 1
-                        m_test = None
-                    continue
-
-                if m_build:
-                    m = p_build_res.match(i)
-                    if m:
-                        if m.group(2) != m_build.group(1):
-                            print(f"ERROR: Build mismatch! Corrupt log? Manual check: {j.logs_url()}")
-                            sys.exit(1)
-                        if args.all_results or m.group(1) != "OK":
-                            print(f"building {m.group(1)}: {os.path.basename(m.group(2))}")
-                        build_close += 1
-                        m_build = None
-                    continue
-
-                m_test = p_test.match(i)
-                if m_test:
-                    test_open += 1
-                    continue
-
-                m_build = p_build.match(i)
-                if m_build:
-                    build_open += 1
-                    continue
-            if test_open != test_close or build_open != build_close:
-                print(f"ERROR: Result mismatch! Corrupt log? Manual check: {j.logs_url()}")
-                sys.exit(1)
-
-            if build_open != SERIES_EXPECTED_BUILDS or test_open != SERIES_EXPECTED_BOOTS:
-                print(f"series: INTERRUPTED? RERUN? builds: {build_open}/{SERIES_EXPECTED_BUILDS} boots: {test_open}/{SERIES_EXPECTED_BOOTS}")
+        print_build_series_run(w)
 
 def print_broken_runs(pr):
     wrs = r.get_workflow_runs(head_sha=pr.head.sha)
@@ -315,8 +314,7 @@ def print_kpd_debug(pr):
 
     print(f"status: overall: '{status}', jobs: '{jobs_logs}")
 
-def print_runs(pr):
-    runs = r.get_workflow_runs(head_sha=pr.head.sha)
+def print_runs(runs):
     for run in runs:
         print(f"run: name='{run.name}' run_started_at='{run.run_started_at}' conclusion='{run.conclusion}' status='{run.status}' event='{run.event}' prs='{run.pull_requests}'")
         if run.status == "in_progress" or run.status == "queued":
@@ -329,6 +327,10 @@ def print_runs(pr):
             print(f"  job: name='{job.name}' conclusion='{job.conclusion}' status='{job.status}'")
             for step in job.steps:
                 print(f"    step: name='{step.name}' conclusion='{step.conclusion}' status='{step.status}'")
+
+def print_pr_runs(pr):
+    runs = r.get_workflow_runs(head_sha=pr.head.sha)
+    print_runs(runs)
 
 def print_pending_orphans(prs):
     good_runs = set()
@@ -367,6 +369,22 @@ def print_age(pr):
     print(f"age: {age}")
     if age > PULL_REQUEST_TTL:
         print(f"{pr} is outdated")
+
+def print_series_runs(runs):
+    cnt = 0
+    for run in runs:
+        if run.name != "linux-riscv-ci-series":
+            continue
+        cnt += 1
+        if cnt > 5:
+            return
+        if run.conclusion == "skipped":
+            continue
+        print(f"series: status: {run.status}")
+        if run.status != "completed":
+            continue
+        print(f"series: started: {run.run_started_at}")
+        print_build_series_run(run)
 
 def parse_args():
     parser = argparse.ArgumentParser(description=''' Manage
@@ -443,6 +461,15 @@ def parse_args():
         "--age", action="store_true", help="Shows the age of a PR"
     )
 
+    parser.add_argument(
+        "--branch-runs", type=str, action="append", help=""
+    )
+
+    parser.add_argument(
+        "--branch-series", type=str, action="append", help=""
+    )
+
+
     return parser.parse_args()
 
 args = parse_args()
@@ -452,6 +479,16 @@ auth = Auth.Token(token)
 g = Github(auth=auth)
 # r = g.get_user().get_repo("linux")
 r = g.get_organization("linux-riscv").get_repo("linux-riscv")
+
+if args.branch_runs:
+    runs = r.get_workflow_runs(branch=args.branch_runs[0])
+    print_runs(runs)
+    sys.exit(0)
+
+if args.branch_series:
+    runs = r.get_workflow_runs(branch=args.branch_series[0])
+    print_series_runs(runs)
+    sys.exit(0)
 
 if args.pr:
     prs = []
@@ -493,7 +530,7 @@ else:
         if args.kpd:
             print_kpd_debug(pr)
         if args.runs or args.runs_all:
-            print_runs(pr)
+            print_pr_runs(pr)
         if args.broken_runs:
             print_broken_runs(pr)
 
