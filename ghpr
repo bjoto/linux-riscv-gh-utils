@@ -158,12 +158,18 @@ def print_patches_workflow(pr):
             if err + warn + ok:
                 print(f'patches: conclusion: {res["conclusion"]} total: {err + warn + ok}')
 
+SERIES_EXPECTED_BUILDS=132
+SERIES_EXPECTED_BOOTS=174
+
 def print_series_workflow(pr):
     wrs = r.get_workflow_runs(head_sha=pr.head.sha)
     w = None
     for i in wrs:
         if i.name == "linux-riscv-ci-series":
             if i.conclusion == "skipped":
+                return
+            if i.status == "in_progress" or i.status == "queued":
+                print("not done yet")
                 return
             w = i
             break
@@ -230,7 +236,9 @@ def print_series_workflow(pr):
             if test_open != test_close or build_open != build_close:
                 print(f"ERROR: Result mismatch! Corrupt log? Manual check: {j.logs_url()}")
                 sys.exit(1)
-            print(f"series: builds: {build_open} boots: {test_open}")
+
+            if build_open != SERIES_EXPECTED_BUILDS or test_open != SERIES_EXPECTED_BOOTS:
+                print(f"series: INTERRUPTED? RERUN? builds: {build_open}/{SERIES_EXPECTED_BUILDS} boots: {test_open}/{SERIES_EXPECTED_BOOTS}")
 
 def print_broken_runs(pr):
     wrs = r.get_workflow_runs(head_sha=pr.head.sha)
