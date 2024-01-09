@@ -319,6 +319,9 @@ def print_runs(pr):
     runs = r.get_workflow_runs(head_sha=pr.head.sha)
     for run in runs:
         print(f"run: name='{run.name}' run_started_at='{run.run_started_at}' conclusion='{run.conclusion}' status='{run.status}' event='{run.event}' prs='{run.pull_requests}'")
+        if run.status == "in_progress" or run.status == "queued":
+            if args.cancel:
+                run.cancel()
         if not args.runs_all:
             continue
         run_jobs = run.jobs()
