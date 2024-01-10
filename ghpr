@@ -158,7 +158,7 @@ def print_patches_workflow(pr):
             if err + warn + ok:
                 print(f'patches: conclusion: {res["conclusion"]} total: {err + warn + ok}')
 
-SERIES_EXPECTED_BUILDS=132
+SERIES_EXPECTED_BUILDS=128
 SERIES_EXPECTED_BOOTS=174
 
 def print_build_series_run(run):
