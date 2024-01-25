@@ -98,8 +98,13 @@ def print_patches_workflow(pr):
     w = None
     for i in wrs:
         if i.name == "linux-riscv-ci-patches":
-            if i.conclusion == "skipped":
-                 return
+            if i.conclusion == "skipped" or i.conclusion == "cancelled":
+                if i.conclusion == "cancelled":
+                    print("cancelled")
+                return
+            if i.status == "in_progress" or i.status == "queued":
+                print("not done yet")
+                return
             w = i
             break
     if w:
@@ -110,6 +115,10 @@ def print_patches_workflow(pr):
                 break
 
         if j:
+            for l in pr.labels:
+                if l.name == "merge-conflict":
+                    print("not run")
+                    return
             logs_url = j.logs_url()
             logs = requests.get(logs_url, allow_redirects=True)
             logs = logs.content.decode('utf-8')
@@ -157,6 +166,9 @@ def print_patches_workflow(pr):
                         print(f'patch{i:02}_test{j:02}: {res[i][j]["state"]} {res[i][j]["test"]}')
             if err + warn + ok:
                 print(f'patches: conclusion: {res["conclusion"]} total: {err + warn + ok}')
+            if len(res) and (err + warn + ok) != (len(res) - 1) * 12:
+                print(f"patches: UNEXPECTED RESULTS: INTERRUPTED? total: {err + warn + ok}/{(len(res) - 1) * 12}")
+
 
 SERIES_EXPECTED_BUILDS=128
 SERIES_EXPECTED_BOOTS=174
